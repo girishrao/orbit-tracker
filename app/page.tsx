@@ -1,65 +1,151 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
+import type { SatelliteData } from "@/app/components/Globe";
+
+const Globe = dynamic(() => import("@/app/components/Globe"), { ssr: false });
+const LaunchTimeline = dynamic(
+  () => import("@/app/components/LaunchTimeline"),
+  { ssr: false }
+);
+const SatelliteSearch = dynamic(
+  () => import("@/app/components/SatelliteSearch"),
+  { ssr: false }
+);
+const OrbitalInfo = dynamic(() => import("@/app/components/OrbitalInfo"), {
+  ssr: false,
+});
+
+type View = "globe" | "launches" | "all";
 
 export default function Home() {
+  const [view, setView] = useState<View>("globe");
+  const [selectedSatellite, setSelectedSatellite] =
+    useState<SatelliteData | null>(null);
+  const [pendingQuery, setPendingQuery] = useState<string>("");
+  const [constellation, setConstellation] = useState<SatelliteData[]>([]);
+  const [constellationLoading, setConstellationLoading] = useState(false);
+  const [selectedConstellationSat, setSelectedConstellationSat] = useState<SatelliteData | null>(null);
+
+  // Called from LaunchTimeline's "Find & Track Satellites" button
+  const handleFindSatellites = useCallback((query: string) => {
+    setPendingQuery(query);
+    setView("globe");
+  }, []);
+
+  // Fetch constellation data once when switching to "all" view
+  useEffect(() => {
+    if (view !== "all") return;
+    if (constellation.length > 0) return;
+
+    setConstellationLoading(true);
+    fetch("/api/satellites/constellation")
+      .then((res) => res.json())
+      .then((data: { satellites: SatelliteData[] }) => {
+        setConstellation(data.satellites ?? []);
+      })
+      .catch((err) => {
+        console.error("[Home] Failed to fetch constellation:", err);
+      })
+      .finally(() => {
+        setConstellationLoading(false);
+      });
+  }, [view, constellation.length]);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="relative w-screen h-screen overflow-hidden bg-black">
+      {view === "globe" && (
+        <Globe satellite={selectedSatellite ?? undefined} />
+      )}
+      {view === "all" && (
+        <Globe
+          constellation={constellation}
+          onConstellationSelect={setSelectedConstellationSat}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+      )}
+      {view === "launches" && (
+        <LaunchTimeline onFindSatellites={handleFindSatellites} />
+      )}
+
+      {/* HUD overlay */}
+      <div className="absolute top-6 left-6 pointer-events-none">
+        <h1 className="text-white text-2xl font-mono font-bold tracking-widest uppercase">
+          Orbit Tracker
+        </h1>
+        <p className="text-white/40 text-xs font-mono mt-1">
+          Real-time satellite &amp; launch visualization
+        </p>
+      </div>
+
+      {/* View toggle */}
+      <div className="absolute top-6 right-6 flex gap-1 font-mono text-xs">
+        <button
+          onClick={() => setView("globe")}
+          className={`px-3 py-1.5 rounded-l border transition-colors ${
+            view === "globe"
+              ? "bg-white/15 text-white border-white/30"
+              : "bg-transparent text-white/40 border-white/10 hover:text-white/60"
+          }`}
+        >
+          Globe
+        </button>
+        <button
+          onClick={() => setView("all")}
+          className={`px-3 py-1.5 border-y border-r transition-colors ${
+            view === "all"
+              ? "bg-white/15 text-white border-white/30"
+              : "bg-transparent text-white/40 border-white/10 hover:text-white/60"
+          }`}
+        >
+          All
+        </button>
+        <button
+          onClick={() => setView("launches")}
+          className={`px-3 py-1.5 rounded-r border transition-colors ${
+            view === "launches"
+              ? "bg-white/15 text-white border-white/30"
+              : "bg-transparent text-white/40 border-white/10 hover:text-white/60"
+          }`}
+        >
+          Launches
+        </button>
+      </div>
+
+      {/* Satellite search — below toggle, right side */}
+      {view === "globe" && (
+        <div className="absolute top-16 right-6">
+          <SatelliteSearch
+            onSelect={setSelectedSatellite}
+            pendingQuery={pendingQuery}
+          />
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      )}
+
+      {/* Orbital info panel — bottom right */}
+      {view === "globe" && selectedSatellite && (
+        <div className="absolute bottom-6 right-6">
+          <OrbitalInfo satellite={selectedSatellite} />
         </div>
-      </main>
-    </div>
+      )}
+
+      {/* Orbital info panel — bottom right (All view) */}
+      {view === "all" && selectedConstellationSat && (
+        <div className="absolute bottom-6 right-6">
+          <OrbitalInfo satellite={selectedConstellationSat} />
+        </div>
+      )}
+
+      {/* Constellation status badge — bottom left */}
+      {view === "all" && (
+        <div className="absolute bottom-6 left-6 pointer-events-none">
+          <span className="font-mono text-xs text-cyan-400/80 bg-black/40 px-3 py-1.5 rounded border border-cyan-400/20">
+            {constellationLoading
+              ? "LOADING..."
+              : `${constellation.length} OBJECTS · LAST 30 DAYS`}
+          </span>
+        </div>
+      )}
+    </main>
   );
 }

@@ -1,0 +1,45 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// A rocket launch (from Launch Library 2 / SpaceX API)
+model Launch {
+  id         String   @id // Launch Library 2 UUID
+  name       String
+  net        DateTime // NET (No Earlier Than) launch time
+  rocketName String
+  status     String
+  padName            String?
+  padLat             Float?
+  padLon             Float?
+  missionName        String?
+  missionDescription String?
+  missionType        String?
+  orbit              String?
+  orbitAbbrev        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  satellites Satellite[]
+}
+
+// An orbital object tracked by NORAD (TLE data from CelesTrak / space-track.org)
+model Satellite {
+  id        Int      @id @default(autoincrement())
+  noradId   Int      @unique
+  name      String
+  tle1      String
+  tle2      String
+  updatedAt DateTime @updatedAt
+
+  launchId String?
+  launch   Launch? @relation(fields: [launchId], references: [id])
+}
