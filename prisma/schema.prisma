@@ -1,5 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Orbit Tracker — "FlightRadar24 for Space"
+// Comprehensive schema stitching Launch Library 2, CelesTrak, r/SpaceX API, and space-track.org
 
 generator client {
   provider = "prisma-client"
@@ -10,36 +10,417 @@ datasource db {
   provider = "sqlite"
 }
 
-// A rocket launch (from Launch Library 2 / SpaceX API)
+// ═══════════════════════════════════════════════════════════════════════
+// ORGANIZATIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+// Launch service providers and satellite operators
+// Source: LL2 /agencies
+model Agency {
+  id          Int      @id // LL2 agency ID
+  name        String
+  abbrev      String? // e.g. "SpX", "NASA"
+  type        String? // "Government", "Commercial", etc.
+  countryCode String? // ISO 3166-1 alpha-3
+  logoUrl     String?
+  wikiUrl     String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  launches   Launch[]
+  programs   ProgramAgency[]
+  satellites Satellite[]
+
+  @@index([abbrev])
+  @@index([countryCode])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ROCKETS & BOOSTERS
+// ═══════════════════════════════════════════════════════════════════════
+
+// A rocket configuration (e.g. "Falcon 9 Block 5", "Atlas V 541")
+// Source: LL2 /config/launcher/
+model RocketConfig {
+  id                 Int     @id // LL2 configuration.id
+  name               String // e.g. "Falcon 9 Block 5"
+  family             String? // e.g. "Falcon"
+  variant            String? // e.g. "Block 5"
+  fullName           String?
+  reusable           Boolean @default(false)
+  lengthMeters       Float?
+  diameterMeters     Float?
+  leoCapacityKg      Float?
+  gtoCapacityKg      Float?
+  thrustKn           Float?
+  totalLaunchCount   Int?
+  successfulLaunches Int?
+  failedLaunches     Int?
+  imageUrl           String?
+  wikiUrl            String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  launches Launch[]
+  cores    Core[]
+
+  @@index([family])
+  @@index([name])
+}
+
+// An individual booster core (e.g. Falcon 9 B1062)
+// Sources: LL2 launcher_stage + r/SpaceX /cores
+model Core {
+  id             String  @id // LL2 launcher UUID or SpaceX core_serial
+  serialNumber   String  @unique // e.g. "B1062"
+  status         String? // "active", "retired", "lost", "unknown"
+  rocketConfigId Int?
+  rocketConfig   RocketConfig? @relation(fields: [rocketConfigId], references: [id])
+  totalFlights   Int     @default(0)
+  lastFlightDate DateTime?
+  reuseCount     Int     @default(0)
+  block          Int? // SpaceX block number
+
+  // SpaceX-specific
+  spxId        String? @unique // r/SpaceX API Mongo ObjectId
+  rtlsAttempts Int?
+  rtlsLandings Int?
+  asdsAttempts Int?
+  asdsLandings Int?
+  lastUpdate   String? // SpaceX free-text status
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  flights CoreFlight[]
+
+  @@index([status])
+  @@index([serialNumber])
+}
+
+// A single flight of a booster core (join: Core <-> Launch)
+// Sources: LL2 launcher_stage per launch + r/SpaceX launches.cores[]
+model CoreFlight {
+  id              Int     @id @default(autoincrement())
+  coreId          String
+  core            Core    @relation(fields: [coreId], references: [id])
+  launchId        String
+  launch          Launch  @relation(fields: [launchId], references: [id])
+  flightNumber    Int? // Which flight of this core (1, 2, 3...)
+  flightProven    Boolean @default(false) // Was it reused on this flight?
+  landingAttempt  Boolean @default(false)
+  landingSuccess  Boolean?
+  landingType     String? // "ASDS", "RTLS", "Ocean", "Expended"
+  landingLocation String? // e.g. "OCISLY", "LZ-1"
+  turnaroundDays  Int? // Days since previous flight of same core
+  createdAt       DateTime @default(now())
+
+  @@unique([coreId, launchId])
+  @@index([launchId])
+  @@index([coreId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// LAUNCHES
+// ═══════════════════════════════════════════════════════════════════════
+
+// A rocket launch event
+// Source: LL2 /launches (primary), r/SpaceX /launches (supplementary)
 model Launch {
-  id         String   @id // Launch Library 2 UUID
-  name       String
-  net        DateTime // NET (No Earlier Than) launch time
-  rocketName String
-  status     String
+  id                 String   @id // LL2 UUID
+  name               String
+  net                DateTime // No Earlier Than
+  rocketName         String // LL2: rocket.configuration.name (denormalized)
+  status             String // LL2: status.name
+  statusAbbrev       String? // LL2: status.abbrev
+
+  // Pad info (denormalized, also in LaunchPad)
   padName            String?
   padLat             Float?
   padLon             Float?
+
+  // Mission info (inline for backward compat)
   missionName        String?
   missionDescription String?
   missionType        String?
   orbit              String?
   orbitAbbrev        String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
 
-  satellites Satellite[]
+  // Extended fields
+  windowStart     DateTime?
+  windowEnd       DateTime?
+  probability     Int? // -1 = unknown, 0-100
+  webcastLive     Boolean  @default(false)
+  imageUrl        String?
+  infographicUrl  String?
+  slug            String?
+
+  // SpaceX cross-reference
+  spxFlightNumber Int?    @unique
+  spxId           String? @unique
+
+  // Relations
+  rocketConfigId Int?
+  rocketConfig   RocketConfig? @relation(fields: [rocketConfigId], references: [id])
+  agencyId       Int? // Launch service provider
+  agency         Agency?       @relation(fields: [agencyId], references: [id])
+  padId          Int?
+  pad            LaunchPad?    @relation(fields: [padId], references: [id])
+
+  satellites     Satellite[] // Backward compat simple FK
+  payloads       Payload[] // Detailed payload records
+  coreFlights    CoreFlight[]
+  launchPrograms LaunchProgram[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([net])
+  @@index([status])
+  @@index([agencyId])
+  @@index([rocketConfigId])
 }
 
-// An orbital object tracked by NORAD (TLE data from CelesTrak / space-track.org)
+// Launch and landing pad locations
+// Source: LL2 /pad
+model LaunchPad {
+  id                          Int     @id // LL2 pad.id
+  name                        String // e.g. "SLC-40"
+  fullName                    String?
+  latitude                    Float?
+  longitude                   Float?
+  locationName                String? // e.g. "Cape Canaveral"
+  countryCode                 String?
+  mapImageUrl                 String?
+  totalLaunchCount            Int?
+  orbitalLaunchAttemptCount   Int?
+  isLandingPad                Boolean @default(false)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  launches Launch[]
+
+  @@index([name])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MISSIONS & PROGRAMS
+// ═══════════════════════════════════════════════════════════════════════
+
+// A space program (e.g. "ISS", "Commercial Crew")
+// Source: LL2 /program
+model Program {
+  id          Int       @id // LL2 program.id
+  name        String
+  description String?
+  imageUrl    String?
+  wikiUrl     String?
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  launches LaunchProgram[]
+  agencies ProgramAgency[]
+}
+
+// Join: Launch <-> Program (M:N)
+model LaunchProgram {
+  id        Int     @id @default(autoincrement())
+  launchId  String
+  launch    Launch  @relation(fields: [launchId], references: [id])
+  programId Int
+  program   Program @relation(fields: [programId], references: [id])
+
+  @@unique([launchId, programId])
+  @@index([programId])
+}
+
+// Join: Program <-> Agency (M:N)
+model ProgramAgency {
+  id        Int     @id @default(autoincrement())
+  programId Int
+  program   Program @relation(fields: [programId], references: [id])
+  agencyId  Int
+  agency    Agency  @relation(fields: [agencyId], references: [id])
+
+  @@unique([programId, agencyId])
+  @@index([agencyId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PAYLOADS — the key join linking launches to orbital objects
+// ═══════════════════════════════════════════════════════════════════════
+
+// Bridges LL2 launch data to CelesTrak/space-track orbital objects.
+// This is the entity nobody else publishes cleanly.
+model Payload {
+  id              Int      @id @default(autoincrement())
+  ll2SpacecraftId Int?     @unique // LL2 spacecraft.id
+  name            String
+  description     String?
+  type            String? // "Satellite", "Capsule", "Rover", "Probe", etc.
+  status          String? // LL2 spacecraft.status.name
+
+  launchId String?
+  launch   Launch? @relation(fields: [launchId], references: [id])
+
+  // The critical join: payload -> orbital object
+  satelliteId Int?       @unique
+  satellite   Satellite? @relation(fields: [satelliteId], references: [id])
+
+  // Matching metadata
+  intlDesignator  String? // e.g. "2023-014A" — used for NORAD matching
+  matchConfidence String? // "exact", "name_match", "designator_match", "manual"
+  matchedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([launchId])
+  @@index([name])
+  @@index([intlDesignator])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SATELLITES / ORBITAL OBJECTS
+// ═══════════════════════════════════════════════════════════════════════
+
+// An orbital object tracked by NORAD
+// Sources: CelesTrak TLE, CelesTrak SATCAT CSV, LL2 (via Payload), r/SpaceX Starlink
 model Satellite {
   id        Int      @id @default(autoincrement())
   noradId   Int      @unique
   name      String
-  tle1      String
-  tle2      String
-  updatedAt DateTime @updatedAt
+  tle1      String // Latest TLE line 1
+  tle2      String // Latest TLE line 2
+  tleEpoch  DateTime? // Epoch from TLE line 1 (for staleness checks)
 
+  // SATCAT metadata (CelesTrak satcat.csv)
+  intlDesignator    String? // e.g. "2023-014A"
+  objectType        String? // "PAY", "R/B", "DEB", "UNK"
+  opsStatusCode     String? // "+", "-", "P", "B", "S", "X", "D", "?"
+  owner             String? // Country/org code, e.g. "US", "CIS"
+  launchDate        DateTime?
+  launchSiteCode    String? // e.g. "AFETR"
+  decayDate         DateTime? // null if still in orbit
+  period            Float? // minutes
+  inclination       Float? // degrees
+  apogee            Float? // km
+  perigee           Float? // km
+  radarCrossSection Float? // m^2
+  satcatUpdatedAt   DateTime?
+
+  // SpaceX Starlink-specific
+  spxId      String? @unique
+  spxVersion String? // e.g. "v1.5", "v2-mini"
+
+  // Backward compat: direct launch FK
   launchId String?
   launch   Launch? @relation(fields: [launchId], references: [id])
+
+  // Operator
+  agencyId Int?
+  agency   Agency? @relation(fields: [agencyId], references: [id])
+
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  payload       Payload? // Reverse of Payload.satelliteId
+  tleSnapshots  TleSnapshot[]
+  conjunctionsA Conjunction[] @relation("ConjunctionPrimary")
+  conjunctionsB Conjunction[] @relation("ConjunctionSecondary")
+
+  @@index([objectType])
+  @@index([opsStatusCode])
+  @@index([owner])
+  @@index([launchId])
+  @@index([intlDesignator])
+  @@index([name])
+  @@index([agencyId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HISTORICAL TLE ARCHIVE — for playback / position reconstruction
+// ═══════════════════════════════════════════════════════════════════════
+
+// A historical TLE snapshot for a satellite
+// Source: space-track.org /gp_history, periodic CelesTrak captures
+model TleSnapshot {
+  id          Int       @id @default(autoincrement())
+  satelliteId Int
+  satellite   Satellite @relation(fields: [satelliteId], references: [id], onDelete: Cascade)
+  noradId     Int // Denormalized for efficient queries without join
+  epoch       DateTime // TLE epoch from line 1
+  tle1        String
+  tle2        String
+  source      String? // "celestrak", "spacetrack"
+  fetchedAt   DateTime  @default(now())
+
+  @@unique([noradId, epoch])
+  @@index([satelliteId])
+  @@index([noradId, epoch])
+  @@index([epoch])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SPACE SITUATIONAL AWARENESS — conjunction / close-approach events
+// ═══════════════════════════════════════════════════════════════════════
+
+// A conjunction (close approach) between two orbital objects
+// Source: space-track.org CDMs
+model Conjunction {
+  id                         Int      @id @default(autoincrement())
+  cdmId                      String   @unique // space-track CDM_ID
+  creationDate               DateTime
+  tca                        DateTime // Time of Closest Approach
+  missDistance                Float // meters
+  relativeSpeed              Float? // m/s
+  collisionProbability       Float?
+  collisionProbabilityMethod String?
+
+  // Primary object
+  primaryNoradId     Int
+  primaryName        String?
+  primarySatelliteId Int?
+  primarySatellite   Satellite? @relation("ConjunctionPrimary", fields: [primarySatelliteId], references: [id])
+
+  // Secondary object
+  secondaryNoradId     Int
+  secondaryName        String?
+  secondarySatelliteId Int?
+  secondarySatellite   Satellite? @relation("ConjunctionSecondary", fields: [secondarySatelliteId], references: [id])
+
+  primaryObjectType   String? // "PAYLOAD", "ROCKET BODY", "DEBRIS", "UNKNOWN"
+  secondaryObjectType String?
+  screeningOption     String?
+
+  fetchedAt DateTime @default(now())
+
+  @@index([tca])
+  @@index([primaryNoradId])
+  @@index([secondaryNoradId])
+  @@index([primarySatelliteId])
+  @@index([secondarySatelliteId])
+  @@index([collisionProbability])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// API CACHE & SYNC METADATA
+// ═══════════════════════════════════════════════════════════════════════
+
+// Tracks when each data source was last synced
+model DataSync {
+  id           Int      @id @default(autoincrement())
+  source       String // "ll2_launches", "celestrak_tle", "celestrak_satcat", etc.
+  entityType   String? // Optional: specific entity type synced
+  lastSyncAt   DateTime
+  recordCount  Int?
+  nextSyncAt   DateTime?
+  status       String   @default("ok") // "ok", "error", "rate_limited"
+  errorMessage String?
+
+  @@unique([source, entityType])
+  @@index([source])
 }

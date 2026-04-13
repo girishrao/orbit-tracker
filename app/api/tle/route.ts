@@ -42,12 +42,37 @@ export async function GET(request: NextRequest) {
     const tle1 = lines[1];
     const tle2 = lines[2];
 
+    // Parse TLE epoch from line 1 (cols 18-32: YY + day-of-year fraction)
+    const epochYear = parseInt(tle1.substring(18, 20), 10);
+    const epochDay = parseFloat(tle1.substring(20, 32));
+    const fullYear = epochYear >= 57 ? 1900 + epochYear : 2000 + epochYear;
+    const tleEpoch = new Date(Date.UTC(fullYear, 0, 1));
+    tleEpoch.setTime(tleEpoch.getTime() + (epochDay - 1) * 86400000);
+
     // Upsert into database
     const satellite = await db.satellite.upsert({
       where: { noradId },
-      update: { name, tle1, tle2 },
-      create: { noradId, name, tle1, tle2 },
+      update: { name, tle1, tle2, tleEpoch },
+      create: { noradId, name, tle1, tle2, tleEpoch },
     });
+
+    // Archive TLE snapshot if epoch differs from last stored snapshot
+    try {
+      await db.tleSnapshot.upsert({
+        where: { noradId_epoch: { noradId, epoch: tleEpoch } },
+        update: { tle1, tle2, source: "celestrak" },
+        create: {
+          satelliteId: satellite.id,
+          noradId,
+          epoch: tleEpoch,
+          tle1,
+          tle2,
+          source: "celestrak",
+        },
+      });
+    } catch {
+      // Non-critical — don't fail the main request if snapshot fails
+    }
 
     return NextResponse.json({
       noradId: satellite.noradId,

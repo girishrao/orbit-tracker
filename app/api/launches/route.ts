@@ -13,23 +13,42 @@ export async function GET() {
     process.env.NODE_ENV === "development"
       ? "https://lldev.thespacedevs.com/2.3.0/launches/"
       : "https://ll.thespacedevs.com/2.3.0/launches/";
-  const url = new URL(baseUrl);
-  url.searchParams.set("format", "json");
-  url.searchParams.set("limit", "50");
-  url.searchParams.set("ordering", "-net");
-  url.searchParams.set("net__gte", threeMonthsAgo.toISOString());
-  url.searchParams.set("net__lte", threeMonthsAhead.toISOString());
+  const buildUrl = (params: Record<string, string>) => {
+    const url = new URL(baseUrl);
+    url.searchParams.set("format", "json");
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    return url.toString();
+  };
+
+  // Past: newest-first within the last 3 months, up to 50
+  const pastUrl = buildUrl({
+    limit: "50",
+    ordering: "-net",
+    net__gte: threeMonthsAgo.toISOString(),
+    net__lte: now.toISOString(),
+  });
+
+  // Upcoming: soonest-first within the next 3 months, up to 50
+  const upcomingUrl = buildUrl({
+    limit: "50",
+    ordering: "net",
+    net__gt: now.toISOString(),
+    net__lte: threeMonthsAhead.toISOString(),
+  });
 
   try {
-    const res = await fetch(url.toString(), { cache: "no-store" });
+    const [pastRes, upcomingRes] = await Promise.all([
+      fetch(pastUrl, { cache: "no-store" }),
+      fetch(upcomingUrl, { cache: "no-store" }),
+    ]);
 
-    if (!res.ok) {
+    if (!pastRes.ok || !upcomingRes.ok) {
       return NextResponse.json(await dbFallback(threeMonthsAgo, threeMonthsAhead));
     }
 
-    const data = await res.json();
+    const [pastData, upcomingData] = await Promise.all([pastRes.json(), upcomingRes.json()]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const launches: any[] = data.results ?? [];
+    const launches: any[] = [...(pastData.results ?? []), ...(upcomingData.results ?? [])];
 
     // Map fields from LL2 response
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,6 +67,9 @@ export async function GET() {
       orbit: launch.mission?.orbit?.name ?? null,
       orbitAbbrev: launch.mission?.orbit?.abbrev ?? null,
     }));
+
+    // Sort newest-first across the merged past + upcoming set
+    rows.sort((a, b) => b.net.getTime() - a.net.getTime());
 
     // Upsert sequentially to avoid SQLite write-lock contention
     for (const row of rows) {
