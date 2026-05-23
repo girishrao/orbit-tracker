@@ -1,0 +1,3 @@
+[{"id":1,"source":"ll2_launches","entityType":"detailed","lastSyncAt":"2026-04-10T21:25:41.138+00:00","recordCount":20,"nextSyncAt":null,"status":"ok","errorMessage":null},
+{"id":3,"source":"celestrak_payloads","entityType":"designator_match","lastSyncAt":"2026-04-10T21:25:49.263+00:00","recordCount":92,"nextSyncAt":null,"status":"ok","errorMessage":null},
+{"id":4,"source":"celestrak_satcat","entityType":"bulk","lastSyncAt":"2026-04-10T21:25:56.761+00:00","recordCount":100,"nextSyncAt":null,"status":"ok","errorMessage":null}]

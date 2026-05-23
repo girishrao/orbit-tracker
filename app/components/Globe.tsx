@@ -33,16 +33,12 @@ export default function Globe({ satellite, constellation, onConstellationSelect 
     (window as unknown as Record<string, unknown>).CESIUM_BASE_URL = "/cesium/";
 
     import("cesium").then(
-      ({ Viewer, Ion, Color, OpenStreetMapImageryProvider, ImageryLayer }) => {
+      ({ Viewer, Ion, Color, ImageryLayer }) => {
         // Guard against React Strict Mode double-invoke creating two viewers
         if (!containerRef.current || viewerRef.current) return;
 
         Ion.defaultAccessToken =
           process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN ?? "";
-
-        const osm = new OpenStreetMapImageryProvider({
-          url: "https://tile.openstreetmap.org/",
-        });
 
         const v = new Viewer(containerRef.current!, {
           animation: false,
@@ -55,7 +51,7 @@ export default function Globe({ satellite, constellation, onConstellationSelect 
           selectionIndicator: false,
           timeline: false,
           navigationHelpButton: false,
-          baseLayer: new ImageryLayer(osm),
+          baseLayer: ImageryLayer.fromWorldImagery(),
         });
 
         // Dark space background
